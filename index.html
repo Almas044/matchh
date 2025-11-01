@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🧬 DNA Barcoding Simulator & Validator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <script>
+        // --- Tailwind Config (Kept as-is) ---
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        // Bright, high-contrast colors for the dark theme
+                        dnaA: '#4ade80', // Green (Adenine)
+                        dnaT: '#ef4444', // Red (Thymine)
+                        dnaC: '#3b82f6', // Blue (Cytosine)
+                        dnaG: '#facc15', // Yellow (Guanine)
+                        backbone: '#a78bfa', // Purple for the sugar-phosphate backbone
+                        dnaMatch: '#10b981', // Emerald Green for success
+                        dnaMismatch: '#dc2626', // Bright Red for error
+                        cardBg: '#1f2937', // Dark Blue-Gray for card backgrounds
+                        darkBg: '#111827', // Extra dark background
+                        // New: Darker base colors for better contrast in the alignment view
+                        dnaA_dark: '#1e3a29',
+                        dnaT_dark: '#450a0a',
+                        dnaC_dark: '#172554',
+                        dnaG_dark: '#422006',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Custom styles (Kept as-is) */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #111827; /* Extra dark background */
+            color: #d1d5db; /* Light gray text */
+        }
+        .dna-card {
+            box-shadow: 0 5px 15px -3px rgba(0, 0, 0, 0.4), 0 2px 6px -2px rgba(0, 0, 0, 0.2);
+        }
+        /* Refactored Canvas container to allow horizontal scrolling for long sequences */
+        #dnaCanvasContainer {
+            overflow-x: auto;
+            border: 1px solid #374151;
+            background-color: #1f2937;
+            border-radius: 0.5rem;
+            margin-top: 10px;
+        }
+        /* Ensure canvas remains block and doesn't get weird padding/margin */
+        #dnaCanvas {
+            display: block;
+        }
+        #dna3dContainer {
+            position: relative; /* Set to relative for internal canvas positioning */
+        }
+        #dna3dContainer canvas {
+            display: block; /* Removes a small vertical gap */
+            cursor: grab;
+            width: 100% !important; /* Ensure canvas respects parent width */
+            height: 100% !important; /* Ensure canvas respects parent height */
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8 min-h-screen" onload="runSimulation()">
+
+    <div class="max-w-7xl mx-auto">
+        <h1 class="text-3xl md:text-4xl font-extrabold text-white mb-3 text-center">
+            🔬 DNA Barcoding & Tamper Detection Simulator
+        </h1>
+        <p class="text-center text-lg text-gray-400 mb-8">
+            Simulate **species identification** (barcoding) and **ID integrity checks** (tamper detection) by comparing sequence alignment.
+        </p>
+
+        <div class="mb-8 p-6 bg-cardBg rounded-xl dna-card border border-gray-700">
+            <h2 class="text-2xl font-bold mb-3 text-blue-400">What is DNA Barcoding?</h2>
+            <p class="text-gray-300 mb-4">
+                **DNA Barcoding** is a taxonomic method that uses a short, standardized DNA sequence, or "barcode," to identify a species, much like a UPC code identifies a product in a store. Instead of analyzing complex morphological features, researchers sequence a specific, highly variable gene region—most commonly the **COI gene** (Cytochrome C Oxidase I) for animals—and compare it against a known reference database. If the match percentage is high (typically **over $98.5\%$**), the species is successfully identified.
+            </p>
+
+            <h2 class="text-2xl font-bold mb-3 text-blue-400 mt-6 border-t border-gray-700 pt-4">How This Simulator Works</h2>
+            <ul class="list-disc list-inside space-y-3 text-gray-400">
+                <li>
+                    **Reference Barcode:** Selects the known ID from the database.
+                </li>
+                <li>
+                    **Sample Sequence:** You can either set an **Error Rate** to **generate a simulated sample**, or **enter your own sequence** to validate it against the Reference.
+                </li>
+                <li>
+                    **Alignment and Visualization:** It performs a simple one-to-one alignment (no insertions/deletions). The canvas displays both sequences aligned: <span class="text-green-400 font-semibold">Reference (Top)</span> vs. <span class="text-blue-400 font-semibold">Sample (Bottom)</span>. Mismatches are highlighted in **bright red** to show where the sample deviates from the reference.
+                </li>
+                <li>
+                    **Mode-Specific Validation:** The **Match Percentage** is calculated, and the validation message changes based on the selected mode:
+                    <ul class="list-[circle] list-inside ml-5 mt-2 space-y-1">
+                        <li>**DNA Barcoding Mode:** Checks if the match meets the $\approx 98.5\%$ threshold for species identification.</li>
+                        <li>**Tamper Detection Mode:** Uses a stricter $\approx 95\%$ integrity threshold. A low match percentage simulates a potential data breach or **intentional tampering** with a bio-identity sequence.</li>
+                    </ul>
+                </li>
+            </ul>
+        </div>
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div class="lg:col-span-1 p-6 bg-cardBg rounded-xl dna-card h-full">
+                <h2 class="text-2xl font-bold mb-4 text-white border-b border-gray-700 pb-2">Simulation Parameters</h2>
+
+                <div class="space-y-4">
+
+                    <div class="p-3 bg-gray-700 rounded-lg">
+                        <label for="referenceSequence" class="block text-sm font-medium text-green-300">Reference Barcode Database</label>
+                        <select id="referenceSequence" onchange="toggleSampleInputMode(); runSimulation()" class="mt-1 block w-full rounded-md border-gray-600 shadow-sm p-2 bg-gray-800 text-white focus:ring-green-500 focus:border-green-500 transition duration-150 ease-in-out">
+                            <option value="COI_Human">COI Gene (Human)</option>
+                            <option value="COI_Chimp">COI Gene (Chimpanzee)</option>
+                            <option value="COI_Fish">COI Gene (Zebra Fish)</option>
+                            <option value="COI_Insect">COI Gene (Fruit Fly)</option>
+                            <option value="COI_Dog">COI Gene (Domestic Dog)</option>
+                            <option value="rbcL_Plant">rbcL Gene (Plant: Arabidopsis)</option>
+                            <option value="ITS_Fungus">ITS Region (Fungus: Yeast)</option>
+                        </select>
+                        <p class="text-xs text-gray-400 mt-1">Selects the **real** sequence to load as the 'known' ID.</p>
+                    </div>
+
+                    <div class="p-3 bg-gray-700 rounded-lg">
+                        <label for="sampleInputMode" class="block text-sm font-medium text-blue-300">Sample Sequence Source</label>
+                        <select id="sampleInputMode" onchange="toggleSampleInputMode()" class="mt-1 block w-full rounded-md border-gray-600 shadow-sm p-2 bg-gray-800 text-white focus:ring-blue-500 focus:border-blue-500 transition duration-150 ease-in-out">
+                            <option value="generate">Generate Sample (using Error Rate)</option>
+                            <option value="user_input">User Input Sequence</option>
+                        </select>
+                        <p class="text-xs text-gray-400 mt-1">Choose between simulating an error or checking a manually entered sequence.</p>
+                    </div>
+
+                    <div id="userInputContainer" class="hidden">
+                        <label for="userInputDna" class="block text-sm font-medium text-gray-300">Your Sample DNA Sequence (A, T, C, G only)</label>
+                        <textarea id="userInputDna" rows="4" class="mt-1 block w-full rounded-md border-gray-600 shadow-sm p-2 bg-gray-700 text-white font-mono resize-none focus:ring-yellow-500 focus:border-yellow-500" placeholder="Enter your A, T, C, G sequence here..."></textarea>
+                        <p id="inputError" class="text-xs text-dnaMismatch mt-1 hidden">Error: Input contains invalid characters or is empty.</p>
+                    </div>
+
+                    <div id="mutationRateContainer">
+                        <label for="mutationRate" class="block text-sm font-medium text-gray-300">Mutation/Error Rate (%)</label>
+                        <div class="flex items-center space-x-3 mt-1">
+                            <input type="range" id="mutationRate" value="2" min="0" max="20" step="0.5" class="flex-grow h-2 bg-blue-600 rounded-lg appearance-none cursor-pointer range-lg"
+                                oninput="document.getElementById('rateValue').textContent=this.value; runSimulation()">
+                            <span id="rateValue" class="text-lg font-mono w-10 text-right text-white">2</span>
+                            <span class="text-gray-400">%</span>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-1">The probability that a base in the sample is different from the reference.</p>
+                    </div>
+                    <div>
+                        <label for="mode" class="block text-sm font-medium text-gray-300">Validation Mode</label>
+                        <select id="mode" onchange="runSimulation()" class="mt-1 block w-full rounded-md border-gray-600 shadow-sm p-2 bg-gray-700 text-white focus:ring-blue-500 focus:border-blue-500 transition duration-150 ease-in-out">
+                            <option value="barcoding">DNA Barcoding (Species Match >98.5%)</option>
+                            <option value="tamper">Tamper Detection (ID Validation >95%)</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label for="length" class="block text-sm font-medium text-gray-300">Sequence Length (Bases)</label>
+                        <input type="number" id="length" value="100" min="20" max="500" class="mt-1 block w-full rounded-md border-gray-600 shadow-sm p-2 bg-gray-700 text-white focus:ring-blue-500 focus:border-blue-500 transition duration-150 ease-in-out cursor-not-allowed" disabled>
+                        <p class="text-xs text-gray-500 mt-1">Length is fixed based on the **real** reference sequence chosen.</p>
+                    </div>
+
+                    <div class="border-t border-gray-700 pt-4 mt-4">
+                        <h3 class="text-lg font-semibold mb-2 text-gray-300">Advanced Concepts</h3>
+                        <p class="text-sm text-gray-400 mb-3">
+                            Real-world sequencing errors or intentional tampering often follow specific patterns (e.g., C always mutates to T). This simulation uses simple random substitution.
+                        </p>
+                        <button onclick="document.getElementById('modalMessage').textContent='In a real bio-security application, this would open a console to define specific substitution matrices (e.g., A→C 10% probability, G→T 5% probability) to model specific error types.'; document.getElementById('infoModal').classList.remove('hidden');"
+                            class="w-full py-2 px-4 border border-blue-500 rounded-md shadow-sm text-sm font-medium text-blue-300 bg-gray-700 hover:bg-gray-600 transition duration-150 ease-in-out">
+                            Define Custom Substitution Rules
+                        </button>
+                    </div>
+
+                </div>
+
+                <button id="resimulateBtn" onclick="runSimulation()" class="mt-6 w-full py-3 px-4 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 transition duration-200 ease-in-out shadow-lg shadow-blue-500/50">
+                    Run Validation & Visualize
+                </button>
+            </div>
+
+            <div class="lg:col-span-2 space-y-8">
+
+                <div class="p-6 bg-cardBg rounded-xl dna-card">
+                    <h2 class="text-2xl font-bold mb-4 text-white border-b border-gray-700 pb-2">3D DNA Double Helix Model </h2>
+                    <div id="dna3dContainer" class="w-full h-[400px] rounded-lg border border-gray-700 bg-gray-900">
+                    </div>
+                    <p class="text-xs text-gray-500 mt-2 text-center">Drag the model to rotate it. This is a generic model for illustrative purposes.</p>
+                </div>
+
+
+                <div class="p-6 bg-cardBg rounded-xl dna-card">
+                    <h2 class="text-2xl font-bold mb-4 text-white border-b border-gray-700 pb-2">Sequence Alignment Visualization</h2>
+                    <div id="dnaCanvasContainer" class="h-auto">
+                        <canvas id="dnaCanvas"></canvas>
+                    </div>
+                    <div class="mt-4 flex flex-wrap gap-4 justify-center text-sm font-medium text-gray-900">
+                        <span class="p-1 rounded-md bg-dnaA_dark text-dnaA font-bold">A (Ref)</span>
+                        <span class="p-1 rounded-md bg-dnaT_dark text-dnaT font-bold">T (Ref)</span>
+                        <span class="p-1 rounded-md bg-dnaC_dark text-dnaC font-bold">C (Ref)</span>
+                        <span class="p-1 rounded-md bg-dnaG_dark text-dnaG font-bold">G (Ref)</span>
+                        <span class="p-1 rounded-md bg-dnaMatch text-white font-bold">Match Line (Identity)</span>
+                        <span class="p-1 rounded-md bg-dnaMismatch text-white font-bold">Mismatch Line (Error)</span>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-3 text-center">Visualization only shows the first ${maxBasesToShow} bases for optimal view and performance.</p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div class="p-6 bg-cardBg rounded-xl dna-card">
+                        <h2 class="text-2xl font-bold mb-4 text-white border-b border-gray-700 pb-2">Verification Output</h2>
+
+                        <div id="outputPanel" class="space-y-3">
+                            <p class="text-gray-300 font-semibold text-lg">
+                                Sequence Length: <span id="outputLength" class="font-mono text-blue-400">0</span> bases
+                            </p>
+                            <p class="text-gray-300 font-semibold text-lg">
+                                Number of Mismatches: <span id="outputMismatches" class="font-mono text-dnaMismatch">0</span>
+                            </p>
+                            <div class="bg-gray-700 p-4 rounded-lg">
+                                <p class="text-gray-300 font-bold text-xl">
+                                    Match Percentage: <span id="outputMatch" class="font-extrabold text-3xl text-dnaMatch">0.0%</span>
+                                </p>
+                            </div>
+                            <div id="validationResult" class="p-4 rounded-lg font-bold text-xl text-white">
+                                Awaiting simulation...
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="p-6 bg-cardBg rounded-xl dna-card">
+                        <h2 class="text-2xl font-bold mb-4 text-white border-b border-gray-700 pb-2">Scientific Insights & Facts</h2>
+                        <ul class="list-disc list-inside space-y-3 text-sm text-gray-400">
+                            <li>**Barcoding Threshold:** A species is typically considered a match if its barcode sequence is **>98.5%** similar to the reference. Anything less suggests a different species.</li>
+                            <li>**ID Tamper Detection:** For digital authentication (like a secure DNA ID), an integrity match is usually required to be **>95%** (simplified in this model, often stricter $\approx 99.5\%$). Even a small $5\%$ error could trigger a "Tamper Detected" alert.</li>
+                            <li>**COI Gene:** The most common region for animal DNA barcoding is a 648 base pair section of the **Cytochrome C Oxidase I (COI) gene**.</li>
+                            <li>**Simulation Simplification:** This simulator uses simple **substitution** mutations. Real-world errors also include **insertions** and **deletions**, which require more complex alignment algorithms (like BLAST or Smith-Waterman).</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="p-6 bg-cardBg rounded-xl dna-card">
+                    <h2 class="text-xl font-bold mb-3 text-white border-b border-gray-700 pb-2">Generated Sequences (Raw Data)</h2>
+                    <div class="space-y-2 text-sm">
+                        <p class="font-semibold text-gray-300">Reference Barcode:</p>
+                        <code id="refSequence" class="block p-2 bg-gray-700 border border-gray-600 rounded-md font-mono text-xs overflow-x-auto text-wrap text-green-300"></code>
+                        <p class="font-semibold text-gray-300 pt-2">Sample Sequence:</p>
+                        <code id="sampleSequence" class="block p-2 bg-gray-700 border border-gray-600 rounded-md font-mono text-xs overflow-x-auto text-wrap text-blue-300"></code>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="infoModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+        <div class="bg-cardBg p-6 rounded-lg w-11/12 md:w-1/3 shadow-xl border border-gray-700">
+            <h3 class="text-xl font-bold text-white mb-4 border-b border-gray-600 pb-2">Simulation Information</h3>
+            <p id="modalMessage" class="text-gray-300 mb-6">Message content.</p>
+            <button onclick="document.getElementById('infoModal').classList.add('hidden')" class="w-full py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition">Close</button>
+        </div>
+    </div>
+
+    <script>
+        const BASES = ['A', 'T', 'C', 'G'];
+        const BASE_COLORS = {
+            'A': '#4ade80', // dnaA
+            'T': '#ef4444', // dnaT
+            'C': '#3b82f6', // dnaC
+            'G': '#facc15'  // dnaG
+        };
+        const BASE_DARK_COLORS = {
+            'A': '#1e3a29', // dnaA_dark
+            'T': '#450a0a', // dnaT_dark
+            'C': '#172554', // dnaC_dark
+            'G': '#422006'  // dnaG_dark
+        };
+        const MATCH_COLOR = '#10b981'; // dnaMatch
+        const MISMATCH_COLOR = '#dc2626'; // dnaMismatch
+        const BACKGROUND_COLOR = '#1f2937'; // cardBg
+
+        const BASE_PAIRS = {
+            'A': 'T',
+            'T': 'A',
+            'C': 'G',
+            'G': 'C'
+        };
+
+        const DNA_DATABASE = {
+            // Note: Sequences shortened for visualization clarity, not real COI length (typically ~648bp)
+            'COI_Human': 'ATCTCCACGTCGCGCAATTTACAGGGCTTCGGCAATAACTCGAGGACCAACCAGGCACTCCCACGCACCACCAAGTCGCTACGAAGTCGCCTTCT',
+            'COI_Chimp': 'ATCTCCACGCCACGCAATTTACAGGCCTTTGGCAATAACTCGAGGACCAACCGGGCACTCCCACGCACCACCAAGTCGCTACGAAGTCGCCTTCT',
+            'COI_Fish': 'TCTTCCACGCCATCTCATTTATATGATCGTTGGGGACAAATCCGTAGCGCCACGTGGCTTCGTAGTAACTGCATTAGTCGACGCCGTCCTCCAG',
+            'COI_Insect': 'AATTCCACACCATCAATTTAATTGGTGCCTTTAACTGCAGAAAGCTTCTTAATGCTAGAAAGTTGTTCGAAGTGATCCTCTCTTCCTCCAGTGT',
+            // ADDED SPECIES SEQUENCES
+            'COI_Dog': 'ATCTCCACATCGCCGCTTTAACCGGACTCTTGGCAGTGAACTCGGGCCTCCCTTAGGCTCTCCCGCGCAGCTATTAGTTGCAGCCGTCATCACGT',
+            'rbcL_Plant': 'ATGTCACCACAACAAAGACAAAAAACCCGGTCCCTTGGTTCGTTCCACTGTCGAACAGGCGATTCTAGCGCTATTCGTGCTCATGGTTCCTGTCG', // rbcL for plant
+            'ITS_Fungus': 'TTAAAGCTCTTCATGTGGTTGGCTGTATGAACTCACGGCAACGGATATCTCGGCTCTGCATCGATGAAGAACGCAGCGAAATGCGATACGTAGTG', // ITS for fungus
+            // END ADDED SPECIES SEQUENCES
+        };
+
+        let currentRefSequence = '';
+        let currentSampleSequence = '';
+
+        const canvas = document.getElementById('dnaCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // --- Three.js Variables ---
+        let scene, camera, renderer, dnaGroup, controls;
+        const dna3dContainer = document.getElementById('dna3dContainer');
+        let initial3DSetup = false;
+
+
+        function getTailwindColor(colorName) {
+            // Helper to pull the color code from the Tailwind config
+            const customColors = tailwind.config.theme.extend.colors;
+            return customColors[colorName] || '#FFFFFF'; // Fallback to white if not found
+        }
+
+        function getThreeJsColor(colorName) {
+            // Helper to get Three.js hex colors (0x...)
+            const customColors = {
+                'dnaA': 0x4ade80, // Green
+                'dnaT': 0xef4444, // Red
+                'dnaC': 0x3b82f6, // Blue
+                'dnaG': 0xfacc15, // Yellow
+                'backbone': 0xa78bfa, // Purple
+                'cardBg': 0x1f2937,
+                'gray-700': 0x374151
+            };
+            return customColors[colorName] || 0xffffff;
+        }
+
+        // -----------------------------------------------------------
+        //             *** THREE.JS IMPLEMENTATION ***
+        // -----------------------------------------------------------
+
+        function init3D() {
+            // 1. Scene Setup
+            scene = new THREE.Scene();
+
+            // 2. Camera Setup
+            const width = dna3dContainer.clientWidth;
+            const height = dna3dContainer.clientHeight;
+            camera = new THREE.PerspectiveCamera(75, width / height, 0.1, 1000);
+            camera.position.z = 25;
+            camera.position.y = 5;
+
+            // 3. Renderer Setup
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(width, height);
+            // Crucial line: Set background to transparent (0 opacity)
+            renderer.setClearColor(0x000000, 0);
+            dna3dContainer.appendChild(renderer.domElement);
+
+            // 4. Lighting
+            const ambientLight = new THREE.AmbientLight(0x404040, 5); // soft white light
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 3);
+            directionalLight.position.set(10, 10, 10).normalize();
+            scene.add(directionalLight);
+
+            // 5. Controls
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true; // an animation loop is required when either damping or auto-rotation are enabled
+            controls.dampingFactor = 0.05;
+            controls.screenSpacePanning = false;
+            controls.minDistance = 10;
+            controls.maxDistance = 50;
+
+            // 6. DNA Group (to hold all DNA parts and allow easy rotation)
+            dnaGroup = new THREE.Group();
+            scene.add(dnaGroup);
+
+            // 7. Initial Helix Creation (e.g., 20 base pairs)
+            createDoubleHelix(20);
+
+            // 8. Start Animation Loop
+            animate();
+
+            // 9. Handle Resize
+            window.addEventListener('resize', onWindowResize, false);
+        }
+
+        function onWindowResize() {
+            const width = dna3dContainer.clientWidth;
+            const height = dna3dContainer.clientHeight;
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+            renderer.setSize(width, height);
+        }
+
+        function createDoubleHelix(numBasePairs) {
+            // Clear existing geometry
+            if (dnaGroup) {
+                while(dnaGroup.children.length > 0){
+                    dnaGroup.remove(dnaGroup.children[0]);
+                }
+            }
+
+            const RADIUS = 4;
+            const PITCH = 2; // Distance between base pairs
+            const TWIST = Math.PI / 6; // Rotation per base pair (approx 36 degrees for a 10 base pair turn)
+            const BASE_SIZE = 1;
+            const BACKBONE_RADIUS = 0.2;
+            const BOND_RADIUS = 0.15;
+            const BOND_LENGTH = 2 * RADIUS - 2 * BASE_SIZE; // Distance between backbone atoms
+            const BACKBONE_COLOR = getThreeJsColor('backbone');
+            const BOND_COLOR = 0xAAAAAA; // Gray for hydrogen bonds
+
+            const sphereGeometry = new THREE.SphereGeometry(BACKBONE_RADIUS * 2, 16, 16);
+            const cylinderGeometry = new THREE.CylinderGeometry(BACKBONE_RADIUS, BACKBONE_RADIUS, PITCH, 16);
+            const bondGeometry = new THREE.CylinderGeometry(BOND_RADIUS, BOND_RADIUS, BOND_LENGTH, 16);
+            const baseGeometry = new THREE.SphereGeometry(BASE_SIZE * 0.5, 16, 16);
+
+            const backboneMaterial = new THREE.MeshPhongMaterial({ color: BACKBONE_COLOR });
+            const bondMaterial = new THREE.MeshBasicMaterial({ color: BOND_COLOR });
+            const baseMaterials = {
+                'A': new THREE.MeshPhongMaterial({ color: getThreeJsColor('dnaA') }),
+                'T': new THREE.MeshPhongMaterial({ color: getThreeJsColor('dnaT') }),
+                'C': new THREE.MeshPhongMaterial({ color: getThreeJsColor('dnaC') }),
+                'G': new THREE.MeshPhongMaterial({ color: getThreeJsColor('dnaG') }),
+            };
+
+            // Generate a simple, stable sequence for the generic 3D model
+            const genericSequence = 'ATCG'.repeat(Math.ceil(numBasePairs / 4)).substring(0, numBasePairs);
+
+            for (let i = 0; i < numBasePairs; i++) {
+                const y = i * PITCH;
+                const angle = i * TWIST;
+
+                const base1Char = genericSequence[i];
+                const base2Char = BASE_PAIRS[base1Char];
+
+                // --- Backbone 1 (Left Strand) ---
+                const x1 = RADIUS * Math.cos(angle);
+                const z1 = RADIUS * Math.sin(angle);
+
+                // Base 1 Atom
+                const base1 = new THREE.Mesh(baseGeometry, baseMaterials[base1Char]);
+                base1.position.set(x1 * 0.5, y, z1 * 0.5);
+                dnaGroup.add(base1);
+
+                // Backbone Atom (Sphere)
+                const backboneAtom1 = new THREE.Mesh(sphereGeometry, backboneMaterial);
+                backboneAtom1.position.set(x1, y, z1);
+                dnaGroup.add(backboneAtom1);
+
+                // Backbone 1 Segment (Cylinder)
+                if (i > 0) {
+                    const prev_angle = (i - 1) * TWIST;
+                    const prev_x1 = RADIUS * Math.cos(prev_angle);
+                    const prev_z1 = RADIUS * Math.sin(prev_angle);
+
+                    const cylinder1 = new THREE.Mesh(cylinderGeometry, backboneMaterial);
+                    cylinder1.position.set((x1 + prev_x1) / 2, y - PITCH / 2, (z1 + prev_z1) / 2);
+                    // Use a temporary vector to calculate rotation to the previous point
+                    const tempVec = new THREE.Vector3(x1 - prev_x1, PITCH, z1 - prev_z1);
+                    cylinder1.lookAt(tempVec.add(cylinder1.position));
+                    cylinder1.rotateX(Math.PI / 2); // Correct cylinder orientation
+                    dnaGroup.add(cylinder1);
+                }
+
+                // --- Backbone 2 (Right Strand) ---
+                const x2 = RADIUS * Math.cos(angle + Math.PI); // Opposite side of the helix
+                const z2 = RADIUS * Math.sin(angle + Math.PI);
+
+                // Base 2 Atom
+                const base2 = new THREE.Mesh(baseGeometry, baseMaterials[base2Char]);
+                base2.position.set(x2 * 0.5, y, z2 * 0.5);
+                dnaGroup.add(base2);
+
+                // Backbone Atom (Sphere)
+                const backboneAtom2 = new THREE.Mesh(sphereGeometry, backboneMaterial);
+                backboneAtom2.position.set(x2, y, z2);
+                dnaGroup.add(backboneAtom2);
+
+                // Backbone 2 Segment (Cylinder) - Twisted in the opposite direction for the complementary strand
+                if (i > 0) {
+                    const prev_angle = (i - 1) * TWIST;
+                    const prev_x2 = RADIUS * Math.cos(prev_angle + Math.PI);
+                    const prev_z2 = RADIUS * Math.sin(prev_angle + Math.PI);
+
+                    const cylinder2 = new THREE.Mesh(cylinderGeometry, backboneMaterial);
+                    cylinder2.position.set((x2 + prev_x2) / 2, y - PITCH / 2, (z2 + prev_z2) / 2);
+
+                    const tempVec2 = new THREE.Vector3(x2 - prev_x2, -PITCH, z2 - prev_z2); // Negative pitch for opposite direction
+                    cylinder2.lookAt(tempVec2.add(cylinder2.position));
+                    cylinder2.rotateX(Math.PI / 2); // Correct cylinder orientation
+                    dnaGroup.add(cylinder2);
+                }
+
+                // --- Hydrogen Bond (Cylinder between bases) ---
+                const bond = new THREE.Mesh(bondGeometry, bondMaterial);
+                bond.position.set(0, y, 0);
+                // Rotate to connect the two base atoms (Base 1 to Base 2)
+                bond.lookAt(base1.position);
+                bond.rotateX(Math.PI / 2);
+                dnaGroup.add(bond);
+            }
+
+            // Center the DNA group vertically
+            dnaGroup.position.y = - (numBasePairs * PITCH) / 2;
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (controls) {
+                controls.update(); // only required if controls.enableDamping = true, or if controls.autoRotate = true
+            }
+
+            if (renderer && scene && camera) {
+                // dnaGroup.rotation.y += 0.005; // Uncomment for a subtle automatic rotation
+                renderer.render(scene, camera);
+            }
+        }
+
+        // -----------------------------------------------------------
+        //             *** END OF THREE.JS IMPLEMENTATION ***
+        // -----------------------------------------------------------
+
+
+        // --- UI Logic (Kept as-is) ---
+        function toggleSampleInputMode() {
+            const mode = document.getElementById('sampleInputMode').value;
+            const rateContainer = document.getElementById('mutationRateContainer');
+            const inputContainer = document.getElementById('userInputContainer');
+
+            if (mode === 'user_input') {
+                rateContainer.classList.add('hidden');
+                inputContainer.classList.remove('hidden');
+                document.getElementById('resimulateBtn').textContent = 'Validate User Input & Visualize';
+            } else {
+                rateContainer.classList.remove('hidden');
+                inputContainer.classList.add('hidden');
+                document.getElementById('resimulateBtn').textContent = 'Resimulate & Visualize';
+            }
+            document.getElementById('inputError').classList.add('hidden');
+        }
+
+        // --- Utility Functions (2D and Core, kept as-is) ---
+
+        function generateSampleSequence(reference, mutationRate) {
+            let sample = '';
+            const mutationProb = mutationRate / 100;
+
+            for (let i = 0; i < reference.length; i++) {
+                const refBase = reference[i];
+
+                if (Math.random() < mutationProb) {
+                    const availableBases = BASES.filter(b => b !== refBase);
+                    const newBase = availableBases[Math.floor(Math.random() * availableBases.length)];
+                    sample += newBase;
+                } else {
+                    sample += refBase;
+                }
+            }
+            return sample;
+        }
+
+        // -----------------------------------------------------------
+        //             *** IMPROVED drawSequenceVisualization ***
+        // -----------------------------------------------------------
+
+        function drawSequenceVisualization(refSeq, sampleSeq, mismatches) {
+            // New, fixed parameters for a more professional-looking alignment
+            const maxBasesToShow = 50; // Show the first 50 bases (more can be complex to render/view)
+            const basesToShow = Math.min(refSeq.length, maxBasesToShow);
+            const baseWidth = 24; // Width of one base cell
+            const baseHeight = 24; // Height of one base cell
+            const cellMargin = 2; // Margin between bases
+            const padding = 20; // Padding around the visualization
+            const lineSpacing = 10; // Space for the match/mismatch line
+            const rowHeight = baseHeight * 2 + lineSpacing + 2 * cellMargin; // Height of one ref/sample pair
+
+            // Calculate canvas size
+            const totalWidth = basesToShow * (baseWidth + cellMargin) + padding * 2;
+            const numRows = 1; // Always show in one line horizontally for a "flow" effect
+            const totalHeight = rowHeight * numRows + padding * 2;
+
+            // Set canvas width/height
+            // We set the canvas width to the calculated total width, and the container handles overflow.
+            canvas.width = totalWidth;
+            canvas.height = totalHeight;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.font = `bold ${baseHeight * 0.6}px monospace`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            // Draw header for sequence names and base numbers
+            ctx.fillStyle = '#9ca3af'; // Light gray text for labels
+
+            // Reference label
+            ctx.fillText('REF', padding / 2, padding + baseHeight / 2, padding);
+
+            // Sample label
+            ctx.fillText('SMP', padding / 2, padding + baseHeight + lineSpacing + baseHeight / 2, padding);
+
+
+            for (let i = 0; i < basesToShow; i++) {
+                const refBase = refSeq[i];
+                const sampleBase = sampleSeq[i];
+                const isMatch = refBase === sampleBase;
+
+                const x = padding + i * (baseWidth + cellMargin);
+                const yRef = padding;
+                const ySample = padding + baseHeight + lineSpacing + cellMargin;
+                const baseCenterX = x + baseWidth / 2;
+
+                // 1. Draw Background Block for Reference Base
+                ctx.fillStyle = BASE_DARK_COLORS[refBase] || BACKGROUND_COLOR;
+                ctx.fillRect(x, yRef, baseWidth, baseHeight);
+
+                // 2. Draw Base Character (Reference)
+                ctx.fillStyle = BASE_COLORS[refBase] || '#ffffff';
+                ctx.fillText(refBase, baseCenterX, yRef + baseHeight / 2);
+
+                // 3. Draw Background Block for Sample Base
+                ctx.fillStyle = BASE_DARK_COLORS[sampleBase] || BACKGROUND_COLOR;
+                ctx.fillRect(x, ySample, baseWidth, baseHeight);
+
+                // 4. Draw Base Character (Sample)
+                ctx.fillStyle = BASE_COLORS[sampleBase] || '#ffffff';
+                ctx.fillText(sampleBase, baseCenterX, ySample + baseHeight / 2);
+
+                // 5. Draw Alignment Indicator Line
+                ctx.strokeStyle = isMatch ? MATCH_COLOR : MISMATCH_COLOR;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                // Connect the bottom of the ref block to the top of the sample block
+                ctx.moveTo(baseCenterX, yRef + baseHeight);
+                ctx.lineTo(baseCenterX, ySample);
+                ctx.stroke();
+
+                // 6. Draw Base Index (above the reference sequence)
+                if (i % 5 === 0) { // Index every 5 bases
+                    ctx.fillStyle = '#9ca3af'; // Light gray
+                    ctx.font = '10px sans-serif';
+                    ctx.fillText(i + 1, baseCenterX, yRef - 5);
+                    ctx.font = `bold ${baseHeight * 0.6}px monospace`; // Reset font
+                }
+            }
+
+            // Indicate that the sequence is truncated
+            if (refSeq.length > maxBasesToShow) {
+                const x = padding + basesToShow * (baseWidth + cellMargin);
+                ctx.fillStyle = '#4b5563'; // Dark gray
+                ctx.font = 'bold 16px sans-serif';
+                ctx.textAlign = 'left';
+                ctx.fillText('...', x + 5, totalHeight / 2);
+            }
+        }
+
+        // -----------------------------------------------------------
+        //             *** END OF IMPROVED drawSequenceVisualization ***
+        // -----------------------------------------------------------
+
+
+        function compareSequences(ref, sample) {
+            let matches = 0;
+            let length = Math.min(ref.length, sample.length);
+
+            for (let i = 0; i < length; i++) {
+                if (ref[i] === sample[i]) {
+                    matches++;
+                }
+            }
+            const mismatches = length - matches;
+            const matchPercentage = length > 0 ? (matches / length) * 100 : 0;
+
+            return { length, matches, mismatches, matchPercentage };
+        }
+
+        function runSimulation() {
+            if (!initial3DSetup) {
+                init3D();
+                initial3DSetup = true;
+            }
+
+            const refKey = document.getElementById('referenceSequence').value;
+            const inputMode = document.getElementById('sampleInputMode').value;
+            const mutationRate = parseFloat(document.getElementById('mutationRate').value);
+            const validationMode = document.getElementById('mode').value;
+
+            currentRefSequence = DNA_DATABASE[refKey];
+
+            if (inputMode === 'user_input') {
+                let userInput = document.getElementById('userInputDna').value.toUpperCase().replace(/[^ATCG]/g, '');
+                if (!userInput) {
+                    document.getElementById('inputError').textContent = 'Error: Input is empty or contains only invalid characters.';
+                    document.getElementById('inputError').classList.remove('hidden');
+                    return;
+                }
+                document.getElementById('inputError').classList.add('hidden');
+                // Trim or pad user input to match the reference sequence length
+                if (userInput.length > currentRefSequence.length) {
+                    userInput = userInput.substring(0, currentRefSequence.length);
+                } else if (userInput.length < currentRefSequence.length) {
+                    // Pad with a neutral character (e.g., 'N' for unknown/gap, but for this simple sim, we'll truncate the ref for comparison)
+                    // For this simple alignment, we match lengths by taking the min
+                    currentRefSequence = currentRefSequence.substring(0, userInput.length);
+                }
+                currentSampleSequence = userInput;
+            } else {
+                currentSampleSequence = generateSampleSequence(currentRefSequence, mutationRate);
+            }
+
+            const comparison = compareSequences(currentRefSequence, currentSampleSequence);
+            const { length, mismatches, matchPercentage } = comparison;
+
+            // --- Update UI Outputs ---
+            document.getElementById('outputLength').textContent = length;
+            document.getElementById('outputMismatches').textContent = mismatches;
+            document.getElementById('outputMatch').textContent = `${matchPercentage.toFixed(2)}%`;
+            document.getElementById('refSequence').textContent = currentRefSequence;
+            document.getElementById('sampleSequence').textContent = currentSampleSequence;
+
+            // --- Validation Logic ---
+            const resultDiv = document.getElementById('validationResult');
+            let threshold;
+            let resultMessage;
+
+            if (validationMode === 'barcoding') {
+                threshold = 98.5;
+                if (matchPercentage >= threshold) {
+                    resultDiv.className = 'p-4 rounded-lg font-bold text-xl text-white bg-dnaMatch';
+                    resultMessage = `✅ Species Identified: HIGH SIMILARITY! Match exceeds ${threshold.toFixed(1)}% threshold.`;
+                } else {
+                    resultDiv.className = 'p-4 rounded-lg font-bold text-xl text-white bg-dnaMismatch';
+                    resultMessage = `❌ Species Mismatch: LOW SIMILARITY. Below the ${threshold.toFixed(1)}% threshold. Potential different species.`;
+                }
+            } else { // Tamper Detection
+                threshold = 95.0;
+                if (matchPercentage >= threshold) {
+                    resultDiv.className = 'p-4 rounded-lg font-bold text-xl text-white bg-dnaMatch';
+                    resultMessage = `🔒 ID Integrity CHECKED: High match. Sequence is validated against the known ID.`;
+                } else {
+                    resultDiv.className = 'p-4 rounded-lg font-bold text-xl text-white bg-dnaMismatch';
+                    resultMessage = `🚨 TAMPER ALERT: Low match! Below the ${threshold.toFixed(1)}% integrity threshold. Potential data breach or tamper event.`;
+                }
+            }
+            resultDiv.textContent = resultMessage;
+
+            // --- Visualization Update ---
+            drawSequenceVisualization(currentRefSequence, currentSampleSequence, mismatches);
+        }
+    </script>
+</body>
+</html>
